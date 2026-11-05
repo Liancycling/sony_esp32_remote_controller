@@ -17,7 +17,12 @@ const int recoverTime = 800;     // In milliseconds
 // Default Pins (ESP32-C3)
 const int triggerPin = 20;       // GPIO 20: AF Focus
 const int shutterPin = 21;       // GPIO 21: Shutter / Take Photo
-const int bootButtonPin = 9;     // GPIO 9: Onboard BOOT button (Active LOW)
+const int bootButtonPin = 9;
+// BOOT button long-press detection
+const unsigned long longPressThreshold = 1000; // 1s for Long Press (REC)
+unsigned long bootButtonDownTime = 0;
+bool bootButtonHolding = false;
+     // GPIO 9: Onboard BOOT button (Active LOW)
 
 // Supported Sony camera models
 const int cameraModelsSize = 5;
@@ -110,6 +115,17 @@ void focus()
   pRemoteCharacteristic->writeValue((uint8_t *)"\x01\x06", 2, true);
   delay(actionGapTime);
   Serial.println("Focused!");
+}
+
+void toggleMovieRec()
+{
+  if (!pRemoteCharacteristic) return;
+  Serial.println("Toggling Movie REC...");
+  pRemoteCharacteristic->writeValue((uint8_t *)"\x01\x0f", 2, true);
+  delay(200);
+  pRemoteCharacteristic->writeValue((uint8_t *)"\x01\x0e", 2, true);
+  delay(actionGapTime);
+  Serial.println("Movie REC toggled!");
 }
 
 void takePhoto()
@@ -207,11 +223,36 @@ void loop()
 
   if (connected && pClient && pClient->isConnected())
   {
-    // Onboard BOOT Button
+    // Onboard BOOT Button (Short Press: Photo, Long Press: Toggle Movie REC)
     if (digitalRead(bootButtonPin) == LOW)
     {
-      takePhoto();
-      delay(recoverTime);
+      if (!bootButtonHolding)
+      {
+        bootButtonHolding = true;
+        bootButtonDownTime = millis();
+      }
+      else if (bootButtonDownTime > 0 && (millis() - bootButtonDownTime >= longPressThreshold))
+      {
+        // Long Press triggered: Toggle Movie REC
+        Serial.println("BOOT Button: Long Press detected -> Toggle Movie REC");
+        toggleMovieRec();
+        bootButtonDownTime = 0; // Prevent repeated triggers while still holding
+      }
+    }
+    else
+    {
+      if (bootButtonHolding)
+      {
+        // Button released
+        if (bootButtonDownTime > 0 && (millis() - bootButtonDownTime < longPressThreshold))
+        {
+          // Short Press triggered: Take Photo
+          Serial.println("BOOT Button: Short Press detected -> Take Photo");
+          takePhoto();
+        }
+        bootButtonHolding = false;
+        bootButtonDownTime = 0;
+      }
     }
 
     // External Trigger (Focus)
